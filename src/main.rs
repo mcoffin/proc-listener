@@ -17,6 +17,7 @@ use netlink_proto::{NetlinkFramed};
 use netlink_sys::{Protocol, SocketAddr, TokioSocket};
 use std::mem;
 use std::process;
+use std::io;
 
 #[inline(always)]
 fn nl_bind_address() -> SocketAddr {
@@ -58,6 +59,10 @@ fn proc_ev_enable_message(enable: bool) -> (nl::NetlinkMessageHeader, bytes::Byt
 fn main() {
     use futures::{Future, Stream, Sink};
 
+    println!("nlmsghdr: {}", mem::size_of::<cn::CNHeader>());
+    println!("proc_event: {}", mem::size_of::<cn::proc_event>());
+    println!("nlcnproc_msg: {}", mem::size_of::<cn::CNMessage<cn::proc_event>>());
+
     let socket = TokioSocket::new(Protocol::Connector)
         .and_then(|mut s| s.bind(&nl_bind_address()).map(|_| s))
         .unwrap();
@@ -67,9 +72,21 @@ fn main() {
 
     let handle_messages = stream
         .map(|(msg, _)| msg)
+        .filter_map(|(header, payload)| {
+            if payload.len() < mem::size_of::<cn::CNMessage<cn::proc_event>>() {
+                None
+            } else {
+                Some((header, unsafe {
+                    let payload_ptr: *const cn::CNMessage<cn::proc_event> = mem::transmute(payload.as_ref().as_ptr());
+                    *payload_ptr
+                }))
+            }
+        })
+        .map(|(header, payload)| payload.payload)
+        .filter_map(|payload| payload.data())
         .map_err(|e| panic!("{:?}", e)) // Panic on io::Error to appease tokio runtime
-        .for_each(|(header, payload)| {
-            println!("message: {} ({:?}, {:?})", payload.len() == header.payload_len(), &header, &payload);
+        .for_each(|event_data| {
+            println!("{:?}", &event_data);
             future::ok(())
         });
 
