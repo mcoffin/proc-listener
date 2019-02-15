@@ -57,11 +57,10 @@ fn proc_ev_enable_message(enable: bool) -> (nl::NetlinkMessageHeader, bytes::Byt
 }
 
 fn main() {
+    use cn::ProcEventData;
     use futures::{Future, Stream, Sink};
-
-    println!("nlmsghdr: {}", mem::size_of::<cn::CNHeader>());
-    println!("proc_event: {}", mem::size_of::<cn::proc_event>());
-    println!("nlcnproc_msg: {}", mem::size_of::<cn::CNMessage<cn::proc_event>>());
+    use tokio::codec::Decoder;
+    use tokio::fs as tfs;
 
     let socket = TokioSocket::new(Protocol::Connector)
         .and_then(|mut s| s.bind(&nl_bind_address()).map(|_| s))
@@ -84,9 +83,26 @@ fn main() {
         })
         .map(|(header, payload)| payload.payload)
         .filter_map(|payload| payload.data())
-        .map_err(|e| panic!("{:?}", e)) // Panic on io::Error to appease tokio runtime
-        .for_each(|event_data| {
-            println!("{:?}", &event_data);
+        .filter_map(|event_data| match event_data {
+            ProcEventData::None => None,
+            ProcEventData::Fork { child_tgid, .. } => Some(child_tgid),
+            ProcEventData::Exec { process_tgid, .. } => Some(process_tgid),
+        })
+        .and_then(|pid| {
+            tfs::File::open(format!("/proc/{}/status", &pid))
+                .and_then(|f| {
+                    tokio::codec::LinesCodec::new()
+                        .framed(f)
+                        .take(1)
+                        .into_future()
+                        .map_err(|(io_err, _)| io_err)
+                })
+                .map(|(v, _)| v.unwrap())
+                .map(move |mut s| (pid, s.split_off(6)))
+        })
+        .map_err(|e| panic!("{:?}", e))
+        .for_each(|(pid, name)| {
+            println!("{}: {}", &name, pid);
             future::ok(())
         });
 
