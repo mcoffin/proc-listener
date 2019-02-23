@@ -99,10 +99,37 @@ fn main() {
                 })
                 .map(|(v, _)| v.unwrap())
                 .map(move |mut s| (pid, s.split_off(6)))
+                .then(|res| match res {
+                    Ok(v) => Ok(Some(v)),
+                    Err(e) => match e.kind() {
+                        io::ErrorKind::NotFound => Ok(None),
+                        _ => Err(e),
+                    },
+                })
+        })
+        .filter_map(|v| v)
+        .filter(|&(pid, ref name)| match name.as_ref() {
+            "League of Legen" => true,
+            "LeagueClientUx." => true,
+            "LeagueClientUxR" => true,
+            other => false,
         })
         .map_err(|e| panic!("{:?}", e))
         .for_each(|(pid, name)| {
-            println!("{}: {}", &name, pid);
+            println!("{}:{}", &name, pid);
+            let group_name = if name.starts_with("League of") {
+                "league_game"
+            } else {
+                "."
+            };
+            std::thread::spawn(move || {
+                process::Command::new("bash")
+                    .current_dir("/sys/fs/cgroup/cpuset")
+                    .arg("-c")
+                    .arg(format!("echo {} >> {}/cgroup.procs", pid, group_name))
+                    .status()
+                    .unwrap()
+            });
             future::ok(())
         });
 
