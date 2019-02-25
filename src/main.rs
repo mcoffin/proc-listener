@@ -18,6 +18,16 @@ use netlink_sys::{Protocol, SocketAddr, TokioSocket};
 use std::mem;
 use std::process;
 use std::io;
+use std::fs;
+
+fn cgroup_add_pid<S: AsRef<str>>(group: S, pid: u32) -> io::Result<()> {
+    use io::Write;
+    let filename = format!("/sys/fs/cgroup/cpuset/{}/cgroup.procs", group.as_ref());
+    fs::OpenOptions::new()
+        .append(true)
+        .open(filename)
+        .and_then(|mut procs_file| writeln!(&mut procs_file, "{}", pid))
+}
 
 #[inline(always)]
 fn nl_bind_address() -> SocketAddr {
@@ -122,14 +132,7 @@ fn main() {
             } else {
                 "."
             };
-            std::thread::spawn(move || {
-                process::Command::new("bash")
-                    .current_dir("/sys/fs/cgroup/cpuset")
-                    .arg("-c")
-                    .arg(format!("echo {} >> {}/cgroup.procs", pid, group_name))
-                    .status()
-                    .unwrap()
-            });
+            std::thread::spawn(move || cgroup_add_pid(&group_name, pid).unwrap());
             future::ok(())
         });
 
