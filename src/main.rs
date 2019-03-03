@@ -10,6 +10,8 @@ extern crate tokio_codec;
 mod ffi;
 mod nl;
 mod cn;
+#[cfg(test)]
+mod test;
 
 use futures::future;
 use netlink_packet::{NetlinkMessage};
@@ -20,12 +22,13 @@ use std::process;
 use std::io;
 use std::fs;
 
-fn cgroup_add_pid<S: AsRef<str>>(group: S, pid: u32) -> io::Result<()> {
+pub fn cgroup_add_pid<S: AsRef<str>>(group: S, pid: u32) -> io::Result<()> {
     use io::Write;
     let filename = format!("/sys/fs/cgroup/cpuset/{}/cgroup.procs", group.as_ref());
     fs::OpenOptions::new()
         .append(true)
         .open(filename)
+        .map(io::LineWriter::new)
         .and_then(|mut procs_file| writeln!(&mut procs_file, "{}", pid))
 }
 
@@ -95,7 +98,7 @@ fn main() {
         .filter_map(|payload| payload.data())
         .filter_map(|event_data| match event_data {
             ProcEventData::None => None,
-            ProcEventData::Fork { child_tgid, .. } => Some(child_tgid),
+            ProcEventData::Fork { .. } => None,
             ProcEventData::Exec { process_tgid, .. } => Some(process_tgid),
         })
         .and_then(|pid| {
@@ -120,8 +123,6 @@ fn main() {
         .filter_map(|v| v)
         .filter(|&(pid, ref name)| match name.as_ref() {
             "League of Legen" => true,
-            "LeagueClientUx." => true,
-            "LeagueClientUxR" => true,
             other => false,
         })
         .map_err(|e| panic!("{:?}", e))
