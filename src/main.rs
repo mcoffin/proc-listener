@@ -6,6 +6,7 @@ extern crate netlink_sys;
 extern crate tokio;
 extern crate futures;
 extern crate tokio_codec;
+extern crate tokio_timer;
 
 mod ffi;
 mod nl;
@@ -21,6 +22,9 @@ use std::mem;
 use std::process;
 use std::io;
 use std::fs;
+
+const GAME_NAME: &'static str = "League of Legen";
+const DELAY_SECONDS: u64 = 2;
 
 pub fn cgroup_add_pid<S: AsRef<str>>(group: S, pid: u32) -> io::Result<()> {
     use io::Write;
@@ -98,8 +102,16 @@ fn main() {
         .filter_map(|payload| payload.data())
         .filter_map(|event_data| match event_data {
             ProcEventData::None => None,
-            ProcEventData::Fork { .. } => None,
+            ProcEventData::Fork { child_tgid, .. } => Some(child_tgid),
             ProcEventData::Exec { process_tgid, .. } => Some(process_tgid),
+        })
+        .and_then(|pid| {
+            use std::time::Duration;
+            tokio_timer::sleep(Duration::new(DELAY_SECONDS, 0))
+                .then(move |res| match res {
+                    Ok(_) => Ok(pid),
+                    Err(e) => panic!("{:?}", e),
+                })
         })
         .and_then(|pid| {
             tfs::File::open(format!("/proc/{}/status", &pid))
@@ -122,13 +134,13 @@ fn main() {
         })
         .filter_map(|v| v)
         .filter(|&(pid, ref name)| match name.as_ref() {
-            "League of Legen" => true,
+            GAME_NAME => true,
             other => false,
         })
         .map_err(|e| panic!("{:?}", e))
         .for_each(|(pid, name)| {
             println!("{}:{}", &name, pid);
-            let group_name = if name.starts_with("League of") {
+            let group_name = if name.starts_with(GAME_NAME) {
                 "league_game"
             } else {
                 "."
